@@ -11,6 +11,11 @@ const repoRoot = run('git rev-parse --show-toplevel');
 const pagesDir = process.cwd(); // run this script with working-directory set to the pages folder
 const baseUrl = process.env.BASE_URL ? process.env.BASE_URL.replace(/\/$/, '') : ''; // optional env
 
+// Helper to normalize for web links
+function toWebPath(p) {
+    return p.replace(/\\/g, '/').replace(/^\.\//, '');
+}
+
 // locate the target folder named 'webpages' (use it if present), otherwise use pagesDir
 const targetFolderName = 'webpages';
 let targetDir = path.join(pagesDir, targetFolderName);
@@ -19,18 +24,12 @@ if (!fs.existsSync(targetDir) || !fs.statSync(targetDir).isDirectory()) {
 }
 const targetPrefix = toWebPath(path.relative(pagesDir, targetDir)); // e.g. 'webpages' or ''
 
-// Helper to normalize for web links
-function toWebPath(p) {
-    return p.replace(/\\/g, '/').replace(/^\.\//, '');
-}
-
 // Get files changed in latest commit
 let changedFiles = [];
 try {
     const raw = run('git diff-tree --no-commit-id --name-only -r HEAD');
     changedFiles = raw.split('\n').filter(Boolean);
 } catch (e) {
-    // If no commits or other error, leave empty
     changedFiles = [];
 }
 
@@ -65,15 +64,172 @@ function walk(dir, base) {
 
 const tree = walk(targetDir, targetDir);
 
-// Build index.html — only show contents of targetDir; use <details> for nested folders (depth>0)
-function renderIndex(changedPages, tree) {
-    const title = 'Site Index';
+// helpers
+function safeName(rel) {
+    if (!rel) return '__root';
+    return rel.replace(/[\/\\]/g, '_').replace(/\s+/g, '_');
+}
+function ensureDir(dir) {
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+}
+function escapeXml(s) {
+    return String(s).replace(/[<>&'"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', "'": '&apos;', '"': '&quot;' }[c]));
+}
+
+// collect folder nodes (including root)
+function collectFolderNodes(node, rel = '') {
+    const list = [{ rel, node }];
+    for (const fd of node.folders || []) {
+        const childRel = rel ? `${rel}/${fd.name}` : fd.name;
+        list.push(...collectFolderNodes(fd, childRel));
+    }
+    return list;
+}
+
+// create folders for auxiliary outputs
+const sitemapsDir = path.join(pagesDir, 'sitemaps');
+ensureDir(sitemapsDir);
+
+// collect folder nodes
+const folderNodes = collectFolderNodes(tree, '');
+
+// Create latest_changes.html in pages root (links relative to pages root)
+function renderLatestChanges(changedPagesList) {
+    const title = 'Latest Changes';
+    const items = changedPagesList.length ? changedPagesList.map(p => {
+        const href = targetPrefix ? `${targetPrefix}/${p}` : p;
+        return `<li><a href="./${encodeURI(href)}">${href}</a></li>`;
+    }).join('\n') : '<li>None in latest commit</li>';
+    return `<!doctype html>
+<html>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title></head>
+<body>
+<h1>${title}</h1>
+<section><ul>${items}</ul></section>
+</body>
+</html>`;
+}
+const latestPath = path.join(pagesDir, 'latest_changes.html');
+fs.writeFileSync(latestPath, renderLatestChanges(changedPages), 'utf8');
+
+// Utility to collect pages under a node (relative paths within targetDir)
+function collectPagesUnder(node, baseRel = '') {
+    let out = [];
+    for (const p of node.pages || []) out.push((baseRel ? `${baseRel}/${p.rel}` : p.rel));
+    for (const fd of node.folders || []) {
+        const childRel = baseRel ? `${baseRel}/${fd.name}` : fd.name;
+        out = out.concat(collectPagesUnder(fd, childRel));
+    }
+    return out;
+}
+
+// render sitemap for a folder (pagesList are relative to targetDir)
+function renderSitemapForFolder(folderRel, pagesList) {
+    const urls = pagesList.map(p => {
+        const urlPath = targetPrefix ? `${targetPrefix}/${p}` : p;
+        const href = baseUrl ? `${baseUrl}/${urlPath}` : `/${urlPath}`;
+        return `<url><loc>${escapeXml(href)}</loc></url>`;
+    }).join('\n');
+    return `<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+${urls}
+</urlset>`;
+}
+
+// Create a sitemap for each folder and write into sitemapsDir
+const sitemapFiles = [];
+for (const f of folderNodes) {
+    const rel = f.rel; // '' for root
+    const node = f.node;
+    const name = safeName(rel);
+    const pagesList = collectPagesUnder(node, '');
+    const sitemapContent = renderSitemapForFolder(rel, pagesList);
+    const sitemapName = `sitemap_${name}.xml`;
+    const sitemapPathLocal = path.join(sitemapsDir, sitemapName);
+    fs.writeFileSync(sitemapPathLocal, sitemapContent, 'utf8');
+    sitemapFiles.push(toWebPath(path.relative(pagesDir, sitemapPathLocal)));
+}
+
+// Build sitemap index referencing all sitemap files (which are in sitemaps/)
+function renderSitemapIndex(sitemaps) {
+    const entries = sitemaps.map(s => {
+        const href = baseUrl ? `${baseUrl}/${s}` : `/${s}`;
+        return `<sitemap><loc>${escapeXml(href)}</loc></sitemap>`;
+    }).join('\n');
+    return `<?xml version="1.0" encoding="UTF-8"?>
+<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+${entries}
+</sitemapindex>`;
+}
+const sitemapIndexPath = path.join(pagesDir, 'sitemap.xml'); // root sitemap.xml as index of per-folder sitemaps
+fs.writeFileSync(sitemapIndexPath, renderSitemapIndex(sitemapFiles), 'utf8');
+fs.writeFileSync(path.join(pagesDir, 'sitemap_index.xml'), renderSitemapIndex(sitemapFiles), 'utf8');
+
+// Create index.html inside every folder under targetDir (including targetDir root)
+function renderDirIndex(folderRel, folderNode, dirAbsolutePath) {
+    // relative path from this directory to pagesDir root (so we can link latest_changes.html)
+    const relToRoot = toWebPath(path.relative(dirAbsolutePath, pagesDir) || '.');
+    const latestHref = relToRoot === '.' ? './latest_changes.html' : `${relToRoot}/latest_changes.html`;
+
+    const title = `Index for ${folderRel || '/'}`;
+    // files in this folder (folderNode.pages contain filenames relative to this folder)
+    const filesList = (folderNode.pages || []).map(pg => {
+        const href = `./${encodeURI(pg.name)}`;
+        return `<li><a href="${href}">${pg.name}</a></li>`;
+    }).join('\n') || '<li>(no pages)</li>';
+
+    // subfolders inside this folder
+    const subfoldersList = (folderNode.folders || []).map(fd => {
+        const href = `./${fd.name}/`; // link to folder root; users can open its index.html
+        return `<li><a href="${href}">${fd.name}/</a></li>`;
+    }).join('\n') || '<li>(no subfolders)</li>';
+
+    // Back link to parent: if this folder is targetDir root, back goes to pagesDir root index (pagesDir/index.html)
+    let backHref = null;
+    if (folderRel) {
+        // inside a subfolder; parent is one level up
+        backHref = '../';
+    } else {
+        // at targetDir root -> back to pagesDir root index (pagesDir/index.html)
+        backHref = toWebPath(path.relative(dirAbsolutePath, pagesDir) || '.') + '/';
+        // normalize
+        if (backHref === './') backHref = './';
+    }
+
+    return `<!doctype html>
+<html>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title></head>
+<body>
+<p><a href="${latestHref}">Latest changes</a></p>
+<h1>${title}</h1>
+<section><h2>Files</h2><ul>${filesList}</ul></section>
+<section><h2>Subfolders</h2><ul>${subfoldersList}</ul></section>
+<p><a href="${backHref}">Back</a></p>
+</body>
+</html>`;
+}
+
+// write index.html into each folder
+for (const f of folderNodes) {
+    const rel = f.rel; // '' for root
+    const node = f.node;
+    const dirAbs = rel ? path.join(targetDir, rel) : targetDir;
+    const indexHtml = renderDirIndex(rel, node, dirAbs);
+    const indexPathLocal = path.join(dirAbs, 'index.html');
+    fs.writeFileSync(indexPathLocal, indexHtml, 'utf8');
+}
+
+// Also update the main pagesDir/index.html (overview) to link into targetPrefix and to latest_changes
+function renderOverviewIndex(changedPages, tree) {
+    const title = 'Site Index (overview)';
+    const latestLink = './latest_changes.html';
+    // top changed pages list (links relative to pages root)
     const topLinks = changedPages.map(p => {
         const href = targetPrefix ? `${targetPrefix}/${p}` : p;
         return `<li><a href="./${encodeURI(href)}">${href}</a></li>`;
     }).join('\n') || '<li>None in latest commit</li>';
 
-    function renderTree(node, depth = 0) {
+    function renderTreeOver(node, depth = 0, relPrefix = '') {
         let out = '';
         if (node.pages && node.pages.length) {
             out += '<ul>\n';
@@ -86,37 +242,28 @@ function renderIndex(changedPages, tree) {
         if (node.folders && node.folders.length) {
             out += '<ul>\n';
             for (const fd of node.folders) {
-                if (depth === 0) {
-                    // top-level (the 'webpages' root) — do not collapse
-                    out += `${' '.repeat(depth)}<li><strong>${fd.name}/</strong>\n`;
-                    out += renderTree(fd, depth + 1);
-                    out += `${' '.repeat(depth)}</li>\n`;
-                } else {
-                    // nested folders — place contents in a details block to reduce page length
-                    out += `${' '.repeat(depth)}<li><details><summary>${fd.name}/</summary>\n`;
-                    out += renderTree(fd, depth + 1);
-                    out += `${' '.repeat(depth)}</details></li>\n`;
-                }
+                const childRel = relPrefix ? `${relPrefix}/${fd.name}` : fd.name;
+                const childSafe = safeName(childRel);
+                const folderIndexHref = targetPrefix ? `${targetPrefix}/${fd.rel ? fd.rel : fd.name}/` : `${fd.rel ? fd.rel : fd.name}/`;
+                out += `${' '.repeat(depth)}<li><a href="./${folderIndexHref}"><strong>${fd.name}/</strong></a>\n`;
+                out += renderTreeOver(fd, depth + 2, childRel);
+                out += `${' '.repeat(depth)}</li>\n`;
             }
             out += '</ul>\n';
         }
         return out;
     }
 
-    const allPagesSection = renderTree(tree);
+    const allPagesSection = renderTreeOver(tree, 0, '');
 
-    // Show which folder is being displayed so it's clear (targetPrefix may be empty)
     const shownRootLabel = targetPrefix || path.basename(pagesDir);
 
     return `<!doctype html>
 <html>
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${title}</title>
-</head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title></head>
 <body>
 <h1>${title} — showing: ${shownRootLabel}</h1>
+<p><a href="${latestLink}">Latest changes</a></p>
 <section>
   <h2>Recently edited (latest commit)</h2>
   <ul>
@@ -131,30 +278,10 @@ function renderIndex(changedPages, tree) {
 </html>`;
 }
 
-// Build sitemap.xml (only pages under targetDir)
-function renderSitemap(tree) {
-    const pages = [];
-    function collect(node) {
-        if (node.pages) for (const p of node.pages) pages.push(p.rel);
-        if (node.folders) for (const f of node.folders) collect(f);
-    }
-    collect(tree);
-    const urls = pages.map(p => {
-        const urlPath = targetPrefix ? `${targetPrefix}/${p}` : p;
-        const href = baseUrl ? `${baseUrl}/${urlPath}` : `/${urlPath}`;
-        return `<url><loc>${escapeXml(href)}</loc></url>`;
-    }).join('\n');
+const overviewIndexPath = path.join(pagesDir, 'index.html');
+fs.writeFileSync(overviewIndexPath, renderOverviewIndex(changedPages, tree), 'utf8');
 
-    return `<?xml version="1.0" encoding="UTF-8"?>
-<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-${urls}
-</urlset>`;
-}
-
-function escapeXml(s) {
-    return s.replace(/[<>&'"]/g, (c)=>({'<':'&lt;','>':'&gt;','&':'&amp;',"'":'&apos;','"':'&quot;'}[c]));
-}
-
+// write robots (point to root sitemap.xml)
 function renderRobots() {
     const sitemapUrl = baseUrl ? `${baseUrl}/sitemap.xml` : '/sitemap.xml';
     return `User-agent: *
@@ -162,14 +289,6 @@ Allow: /
 Sitemap: ${sitemapUrl}
 `;
 }
+fs.writeFileSync(path.join(pagesDir, 'robots.txt'), renderRobots(), 'utf8');
 
-// Write files (index remains at pagesDir root; it will point into targetPrefix if needed)
-const indexPath = path.join(pagesDir, 'index.html');
-const sitemapPath = path.join(pagesDir, 'sitemap.xml');
-const robotsPath = path.join(pagesDir, 'robots.txt');
-
-fs.writeFileSync(indexPath, renderIndex(changedPages, tree), 'utf8');
-fs.writeFileSync(sitemapPath, renderSitemap(tree), 'utf8');
-fs.writeFileSync(robotsPath, renderRobots(), 'utf8');
-
-console.log('Generated:', indexPath, sitemapPath, robotsPath);
+console.log('Generated overview index, latest_changes.html, per-folder index.html files and sitemaps in', sitemapsDir);

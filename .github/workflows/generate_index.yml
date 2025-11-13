@@ -70,12 +70,15 @@ jobs:
           cd "$PAGES_DIR"
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add index.html sitemap.xml robots.txt || true
+          # add main generated files plus per-directory index.html under targetDir and sitemaps
+          git add index.html latest_changes.html robots.txt sitemap.xml sitemap_index.xml sitemaps/** || true
+          # also add index.html files written inside the targetDir tree
+          git add **/index.html || true
           if git diff --staged --quiet; then
             echo "No generated changes to commit"
             exit 0
           fi
-          git commit -m "chore: update generated index/sitemap/robots"
+          git commit -m "chore: update generated indexes and sitemaps"
           BRANCH=${GITHUB_REF#refs/heads/}
           echo "Pushing to branch: $BRANCH"
           git push --set-upstream origin "HEAD:$BRANCH"
