@@ -1,0 +1,44 @@
+name: Generate Site Index, Sitemap and Robots
+
+on:
+  push:
+    branches: [ main, master ]
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+
+      - name: Run generator (working directory = webdaily_pages)
+        run: |
+          # Run the generator script from the webdaily_pages folder
+          # The workflow file is placed under d:\collections\webdaily_pages\.github\workflows in this repo layout;
+          # adjust the path below if your pages folder is at a different location in the repo.
+          cd d/collections/webdaily_pages || cd webdaily_pages || exit 0
+          node scripts/generate_site_index.js
+        shell: bash
+
+      - name: Commit and push generated files if changed
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd d/collections/webdaily_pages || cd webdaily_pages || exit 0
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add index.html sitemap.xml robots.txt || true
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "chore: update generated index/sitemap/robots"
+            git push
+          fi
+        shell: bash
