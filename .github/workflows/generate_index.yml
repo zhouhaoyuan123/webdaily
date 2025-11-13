@@ -13,32 +13,73 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Use Node.js
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 18
+          node-version: '18'
 
-      - name: Run generator (working directory = webdaily_pages)
+      - name: Locate generator script and export path
+        id: find_script
         run: |
-          # Run the generator script from the webdaily_pages folder
-          # The workflow file is placed under d:\collections\webdaily_pages\.github\workflows in this repo layout;
-          # adjust the path below if your pages folder is at a different location in the repo.
-          cd d/collections/webdaily_pages || cd webdaily_pages || exit 0
-          node scripts/generate_site_index.js
-        shell: bash
+          # Try to find the generator via tracked files first, fallback to find
+          script=$(git ls-files | grep -m1 'generate_site_index.js' || true)
+          if [ -z "$script" ]; then
+            script=$(find . -type f -name generate_site_index.js | head -n1 || true)
+          fi
+          if [ -z "$script" ]; then
+            echo "No generate_site_index.js found in repo"
+            exit 1
+          fi
+          # normalize path (remove leading ./)
+          script=${script#./}
+          echo "GEN_SCRIPT=$script" >> $GITHUB_ENV
+          echo "Found generator: $script"
+
+      - name: Run generator from pages directory
+        run: |
+          if [ -z "$GEN_SCRIPT" ]; then
+            echo "GEN_SCRIPT not set"
+            exit 1
+          fi
+          # Absolute path to the script in the runner workspace
+          ABS_SCRIPT="$GITHUB_WORKSPACE/$GEN_SCRIPT"
+          if [ ! -f "$ABS_SCRIPT" ]; then
+            echo "Script not found at $ABS_SCRIPT"
+            exit 1
+          fi
+          # pages directory is assumed to be parent of the scripts/ folder
+          PAGES_DIR=$(cd "$(dirname "$ABS_SCRIPT")/.." && pwd)
+          echo "Running generator from pages dir: $PAGES_DIR"
+          cd "$PAGES_DIR"
+          node "$ABS_SCRIPT"
+        env:
+          GITHUB_WORKSPACE: ${{ github.workspace }}
 
       - name: Commit and push generated files if changed
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_WORKSPACE: ${{ github.workspace }}
         run: |
-          cd d/collections/webdaily_pages || cd webdaily_pages || exit 0
+          # Re-locate pages dir (same logic as above) and commit changes there
+          if [ -z "$GEN_SCRIPT" ]; then
+            echo "GEN_SCRIPT not set"
+            exit 1
+          fi
+          ABS_SCRIPT="$GITHUB_WORKSPACE/$GEN_SCRIPT"
+          if [ ! -f "$ABS_SCRIPT" ]; then
+            echo "Script not found at $ABS_SCRIPT"
+            exit 1
+          fi
+          PAGES_DIR=$(cd "$(dirname "$ABS_SCRIPT")/.." && pwd)
+          cd "$PAGES_DIR"
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add index.html sitemap.xml robots.txt || true
           if git diff --cached --quiet; then
-            echo "No changes to commit"
-          else
-            git commit -m "chore: update generated index/sitemap/robots"
-            git push
+            echo "No generated changes to commit"
+            exit 0
           fi
+          git commit -m "chore: update generated index/sitemap/robots"
+          # push using the checkout token
+          git push origin HEAD:${{ github.ref_name }}
         shell: bash
