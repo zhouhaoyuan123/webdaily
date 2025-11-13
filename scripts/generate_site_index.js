@@ -11,6 +11,14 @@ const repoRoot = run('git rev-parse --show-toplevel');
 const pagesDir = process.cwd(); // run this script with working-directory set to the pages folder
 const baseUrl = process.env.BASE_URL ? process.env.BASE_URL.replace(/\/$/, '') : ''; // optional env
 
+// locate the target folder named 'webpages' (use it if present), otherwise use pagesDir
+const targetFolderName = 'webpages';
+let targetDir = path.join(pagesDir, targetFolderName);
+if (!fs.existsSync(targetDir) || !fs.statSync(targetDir).isDirectory()) {
+    targetDir = pagesDir;
+}
+const targetPrefix = toWebPath(path.relative(pagesDir, targetDir)); // e.g. 'webpages' or ''
+
 // Helper to normalize for web links
 function toWebPath(p) {
     return p.replace(/\\/g, '/').replace(/^\.\//, '');
@@ -26,14 +34,14 @@ try {
     changedFiles = [];
 }
 
-// Filter changed files that live inside pagesDir
+// Filter changed files that live inside targetDir (not the whole pagesDir)
 const changedPages = changedFiles
     .map(f => path.resolve(repoRoot, f))
-    .filter(abs => abs.startsWith(pagesDir))
-    .map(abs => toWebPath(path.relative(pagesDir, abs)))
+    .filter(abs => abs.startsWith(targetDir))
+    .map(abs => toWebPath(path.relative(targetDir, abs)))
     .filter(p => p.toLowerCase().endsWith('.html'));
 
-// Recursively list folders and html pages under pagesDir
+// Recursively list folders and html pages under a given base (we'll call with targetDir)
 function walk(dir, base) {
     const entries = fs.readdirSync(dir, { withFileTypes: true });
     const folders = [];
@@ -55,27 +63,40 @@ function walk(dir, base) {
     return { folders, pages };
 }
 
-const tree = walk(pagesDir, pagesDir);
+const tree = walk(targetDir, targetDir);
 
-// Build index.html
+// Build index.html — only show contents of targetDir; use <details> for nested folders (depth>0)
 function renderIndex(changedPages, tree) {
     const title = 'Site Index';
-    const topLinks = changedPages.map(p => `<li><a href="./${encodeURI(p)}">${p}</a></li>`).join('\n') || '<li>None in latest commit</li>';
-    function renderTree(node, indent = 0) {
+    const topLinks = changedPages.map(p => {
+        const href = targetPrefix ? `${targetPrefix}/${p}` : p;
+        return `<li><a href="./${encodeURI(href)}">${href}</a></li>`;
+    }).join('\n') || '<li>None in latest commit</li>';
+
+    function renderTree(node, depth = 0) {
         let out = '';
         if (node.pages && node.pages.length) {
             out += '<ul>\n';
             for (const pg of node.pages) {
-                out += `${' '.repeat(indent)}<li><a href="./${encodeURI(pg.rel)}">${pg.rel}</a></li>\n`;
+                const href = targetPrefix ? `${targetPrefix}/${pg.rel}` : pg.rel;
+                out += `${' '.repeat(depth)}<li><a href="./${encodeURI(href)}">${href}</a></li>\n`;
             }
             out += '</ul>\n';
         }
         if (node.folders && node.folders.length) {
             out += '<ul>\n';
             for (const fd of node.folders) {
-                out += `${' '.repeat(indent)}<li><strong>${fd.name}/</strong>\n`;
-                out += renderTree(fd, indent + 2);
-                out += `${' '.repeat(indent)}</li>\n`;
+                if (depth === 0) {
+                    // top-level (the 'webpages' root) — do not collapse
+                    out += `${' '.repeat(depth)}<li><strong>${fd.name}/</strong>\n`;
+                    out += renderTree(fd, depth + 1);
+                    out += `${' '.repeat(depth)}</li>\n`;
+                } else {
+                    // nested folders — place contents in a details block to reduce page length
+                    out += `${' '.repeat(depth)}<li><details><summary>${fd.name}/</summary>\n`;
+                    out += renderTree(fd, depth + 1);
+                    out += `${' '.repeat(depth)}</details></li>\n`;
+                }
             }
             out += '</ul>\n';
         }
@@ -83,6 +104,9 @@ function renderIndex(changedPages, tree) {
     }
 
     const allPagesSection = renderTree(tree);
+
+    // Show which folder is being displayed so it's clear (targetPrefix may be empty)
+    const shownRootLabel = targetPrefix || path.basename(pagesDir);
 
     return `<!doctype html>
 <html>
@@ -92,7 +116,7 @@ function renderIndex(changedPages, tree) {
 <title>${title}</title>
 </head>
 <body>
-<h1>${title}</h1>
+<h1>${title} — showing: ${shownRootLabel}</h1>
 <section>
   <h2>Recently edited (latest commit)</h2>
   <ul>
@@ -100,14 +124,14 @@ function renderIndex(changedPages, tree) {
   </ul>
 </section>
 <section>
-  <h2>Folders & Pages</h2>
+  <h2>Folders & Pages under ${shownRootLabel}</h2>
   ${allPagesSection}
 </section>
 </body>
 </html>`;
 }
 
-// Build sitemap.xml (simple)
+// Build sitemap.xml (only pages under targetDir)
 function renderSitemap(tree) {
     const pages = [];
     function collect(node) {
@@ -116,7 +140,8 @@ function renderSitemap(tree) {
     }
     collect(tree);
     const urls = pages.map(p => {
-        const href = baseUrl ? `${baseUrl}/${p}` : `/${p}`;
+        const urlPath = targetPrefix ? `${targetPrefix}/${p}` : p;
+        const href = baseUrl ? `${baseUrl}/${urlPath}` : `/${urlPath}`;
         return `<url><loc>${escapeXml(href)}</loc></url>`;
     }).join('\n');
 
@@ -138,7 +163,7 @@ Sitemap: ${sitemapUrl}
 `;
 }
 
-// Write files
+// Write files (index remains at pagesDir root; it will point into targetPrefix if needed)
 const indexPath = path.join(pagesDir, 'index.html');
 const sitemapPath = path.join(pagesDir, 'sitemap.xml');
 const robotsPath = path.join(pagesDir, 'robots.txt');
