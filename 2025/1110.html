@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>WebDaily Issue 1110</title>
+    </head>
+    <body>
+        <!-- This issue is about a keyboard which randomly generates the letter/function of each key after the user presses a key , a div section containing all the contents the user has inputed will be shown at the top
+         it will only show the last letters/functions triggered so that the div will not go out of the screen, 
+         the Javascript will listen to keys A to Z
+         A key can (currently) represent a letter
+         The current keyboard layout will be shown at the bottom of the page 
+        -->
+        <h1>Random Keyboard</h1>
+        <br/>
+        <div style="border:1px solid black; padding:10px; margin-bottom:20px; height:50px; overflow:auto;" contenteditable="true" aria-placeholder="Type here">
+            <!-- trigger keyboard to pop up -->
+        </div>
+        <div id="output" style="border:1px solid black; padding:10px; margin-bottom:20px; height:50px; overflow:auto;">
+            <!-- User input will be displayed here , auto scroll to the latest letter-->
+        </div>
+        <div id="keyboard-layout" style="border:1px solid black; padding:10px;">
+            <!-- Keyboard layout will be displayed here -->
+        </div>
+        <script>
+            // we'll have to ensure the keyboard can pop up on mobile devices
+            const outputDiv = document.getElementById('output');
+            const keyboardLayoutDiv = document.getElementById('keyboard-layout');
+            const keys = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
+            let currentLayout = {};
+
+            function generateRandomLayout() {
+                const shuffledKeys = keys.slice().sort(() => Math.random() - 0.5);
+                currentLayout = {};
+                keys.forEach((key, index) => {
+                    currentLayout[key] = shuffledKeys[index];
+                });
+                displayKeyboardLayout();
+            }
+
+            function displayKeyboardLayout() {
+                keyboardLayoutDiv.innerHTML = '<strong>Current Keyboard Layout:</strong><br/>';
+                for (const [key, value] of Object.entries(currentLayout)) {
+                    keyboardLayoutDiv.innerHTML += `${key} → ${value} &nbsp;&nbsp; `;
+                }
+            }
+            //ensure keyboard pops up on mobile devices by making the div focusable
+            outputDiv.setAttribute('tabindex', '0');
+            outputDiv.focus();
+            document.addEventListener('keydown', (event) => {
+                const pressedKey = event.key.toUpperCase();
+                if (currentLayout[pressedKey]) {
+                    outputDiv.innerHTML += currentLayout[pressedKey];
+                    outputDiv.scrollLeft = outputDiv.scrollWidth// Auto-scroll to right
+                    generateRandomLayout(); // Regenerate layout after each key press
+                }
+            });
+
+            // Initial layout generation
+            generateRandomLayout();
+        </script>
+    </body>
+</html>
