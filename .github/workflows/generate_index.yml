@@ -12,6 +12,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: true
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -32,54 +33,61 @@ jobs:
           fi
           # normalize path (remove leading ./)
           script=${script#./}
-          echo "GEN_SCRIPT=$script" >> $GITHUB_ENV
-          echo "Found generator: $script"
-
-      - name: Run generator from pages directory
-        run: |
-          if [ -z "$GEN_SCRIPT" ]; then
-            echo "GEN_SCRIPT not set"
-            exit 1
-          fi
-          # Absolute path to the script in the runner workspace
-          ABS_SCRIPT="$GITHUB_WORKSPACE/$GEN_SCRIPT"
+          ABS_SCRIPT="$GITHUB_WORKSPACE/$script"
           if [ ! -f "$ABS_SCRIPT" ]; then
             echo "Script not found at $ABS_SCRIPT"
             exit 1
           fi
-          # pages directory is assumed to be parent of the scripts/ folder
           PAGES_DIR=$(cd "$(dirname "$ABS_SCRIPT")/.." && pwd)
-          echo "Running generator from pages dir: $PAGES_DIR"
+          echo "GEN_SCRIPT=$script" >> $GITHUB_ENV
+          echo "ABS_SCRIPT=$ABS_SCRIPT" >> $GITHUB_ENV
+          echo "PAGES_DIR=$PAGES_DIR" >> $GITHUB_ENV
+          echo "Found generator: $ABS_SCRIPT (pages dir: $PAGES_DIR)"
+        shell: bash
+
+      - name: Run generator from pages directory
+        run: |
+          if [ -z "$ABS_SCRIPT" ] || [ -z "$PAGES_DIR" ]; then
+            echo "Required env not set"
+            exit 1
+          fi
           cd "$PAGES_DIR"
           node "$ABS_SCRIPT"
+        shell: bash
         env:
-          GITHUB_WORKSPACE: ${{ github.workspace }}
+          ABS_SCRIPT: ${{ env.ABS_SCRIPT }}
+          PAGES_DIR: ${{ env.PAGES_DIR }}
 
       - name: Commit and push generated files if changed
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITHUB_WORKSPACE: ${{ github.workspace }}
+          PAGES_DIR: ${{ env.PAGES_DIR }}
         run: |
-          # Re-locate pages dir (same logic as above) and commit changes there
-          if [ -z "$GEN_SCRIPT" ]; then
-            echo "GEN_SCRIPT not set"
+          if [ -z "$PAGES_DIR" ]; then
+            echo "PAGES_DIR not set"
             exit 1
           fi
-          ABS_SCRIPT="$GITHUB_WORKSPACE/$GEN_SCRIPT"
-          if [ ! -f "$ABS_SCRIPT" ]; then
-            echo "Script not found at $ABS_SCRIPT"
-            exit 1
-          fi
-          PAGES_DIR=$(cd "$(dirname "$ABS_SCRIPT")/.." && pwd)
           cd "$PAGES_DIR"
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add index.html sitemap.xml robots.txt || true
-          if git diff --cached --quiet; then
+          if git diff --staged --quiet; then
             echo "No generated changes to commit"
             exit 0
           fi
           git commit -m "chore: update generated index/sitemap/robots"
-          # push using the checkout token
-          git push origin HEAD:${{ github.ref_name }}
+          BRANCH=${GITHUB_REF#refs/heads/}
+          echo "Pushing to branch: $BRANCH"
+          git push --set-upstream origin "HEAD:$BRANCH"
         shell: bash
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v3
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v1
+        with:
+          path: ${{ env.PAGES_DIR }}
+
+      - name: Deploy to GitHub Pages
+        uses: actions/deploy-pages@v1
