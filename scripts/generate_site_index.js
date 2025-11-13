@@ -124,10 +124,11 @@ function collectPagesUnder(node, baseRel = '') {
 }
 
 // render sitemap for a folder (pagesList are relative to targetDir)
+// changed: do not emit leading '/' when baseUrl is not set
 function renderSitemapForFolder(folderRel, pagesList) {
     const urls = pagesList.map(p => {
         const urlPath = targetPrefix ? `${targetPrefix}/${p}` : p;
-        const href = baseUrl ? `${baseUrl}/${urlPath}` : `/${urlPath}`;
+        const href = baseUrl ? `${baseUrl}/${urlPath}` : `${urlPath}`; // no leading slash when baseUrl absent
         return `<url><loc>${escapeXml(href)}</loc></url>`;
     }).join('\n');
     return `<?xml version="1.0" encoding="UTF-8"?>
@@ -136,10 +137,11 @@ ${urls}
 </urlset>`;
 }
 
-// Create a sitemap for each folder and write into sitemapsDir
+// Create a sitemap for each non-root folder and write into sitemapsDir
 const sitemapFiles = [];
 for (const f of folderNodes) {
     const rel = f.rel; // '' for root
+    if (!rel) continue; // skip root folder sitemap (avoid sitemap___root.xml)
     const node = f.node;
     const name = safeName(rel);
     const pagesList = collectPagesUnder(node, '');
@@ -147,13 +149,14 @@ for (const f of folderNodes) {
     const sitemapName = `sitemap_${name}.xml`;
     const sitemapPathLocal = path.join(sitemapsDir, sitemapName);
     fs.writeFileSync(sitemapPathLocal, sitemapContent, 'utf8');
-    sitemapFiles.push(toWebPath(path.relative(pagesDir, sitemapPathLocal)));
+    sitemapFiles.push(toWebPath(path.relative(pagesDir, sitemapPathLocal))); // e.g. "sitemaps/sitemap_xxx.xml"
 }
 
 // Build sitemap index referencing all sitemap files (which are in sitemaps/)
+// changed: do not use leading '/' for sitemap paths when baseUrl not set
 function renderSitemapIndex(sitemaps) {
     const entries = sitemaps.map(s => {
-        const href = baseUrl ? `${baseUrl}/${s}` : `/${s}`;
+        const href = baseUrl ? `${baseUrl}/${s}` : `${s}`; // no leading slash if baseUrl absent
         return `<sitemap><loc>${escapeXml(href)}</loc></sitemap>`;
     }).join('\n');
     return `<?xml version="1.0" encoding="UTF-8"?>
@@ -229,32 +232,8 @@ function renderOverviewIndex(changedPages, tree) {
         return `<li><a href="./${encodeURI(href)}">${href}</a></li>`;
     }).join('\n') || '<li>None in latest commit</li>';
 
-    function renderTreeOver(node, depth = 0, relPrefix = '') {
-        let out = '';
-        if (node.pages && node.pages.length) {
-            out += '<ul>\n';
-            for (const pg of node.pages) {
-                const href = targetPrefix ? `${targetPrefix}/${pg.rel}` : pg.rel;
-                out += `${' '.repeat(depth)}<li><a href="./${encodeURI(href)}">${href}</a></li>\n`;
-            }
-            out += '</ul>\n';
-        }
-        if (node.folders && node.folders.length) {
-            out += '<ul>\n';
-            for (const fd of node.folders) {
-                const childRel = relPrefix ? `${relPrefix}/${fd.name}` : fd.name;
-                const childSafe = safeName(childRel);
-                const folderIndexHref = targetPrefix ? `${targetPrefix}/${fd.rel ? fd.rel : fd.name}/` : `${fd.rel ? fd.rel : fd.name}/`;
-                out += `${' '.repeat(depth)}<li><a href="./${folderIndexHref}"><strong>${fd.name}/</strong></a>\n`;
-                out += renderTreeOver(fd, depth + 2, childRel);
-                out += `${' '.repeat(depth)}</li>\n`;
-            }
-            out += '</ul>\n';
-        }
-        return out;
-    }
-
-    const allPagesSection = renderTreeOver(tree, 0, '');
+    // Instead of rendering the entire folder tree inline, provide a single link to the directory index
+    const dirIndexHref = targetPrefix ? `./${targetPrefix}/` : './';
 
     const shownRootLabel = targetPrefix || path.basename(pagesDir);
 
@@ -271,8 +250,8 @@ function renderOverviewIndex(changedPages, tree) {
   </ul>
 </section>
 <section>
-  <h2>Folders & Pages under ${shownRootLabel}</h2>
-  ${allPagesSection}
+  <h2>Open directory</h2>
+  <p><a href="${dirIndexHref}">Open directory index for ${shownRootLabel}</a></p>
 </section>
 </body>
 </html>`;
