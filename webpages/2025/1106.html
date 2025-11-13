@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset="UTF-8">
+        <title>WebDaily Issue 1106</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    </head>
+    <body>
+        <!-- This page contains a canvas in which cars move from the right to the left or left to right (based on user choice) , the user can 
+         adjust the percantage of certain types of cars -->
+        <!-- Ensure the canvas does not go out of the screen -->
+        <!-- Canvas will fill the entire remaining space below the controls--> 
+        <!-- Cars 
+         1. Red
+         2. Yellow
+         3. Green
+         4. Black 
+         5. Blue -->
+        <!-- also ensure cars do not go over each other -->
+        <div>
+            <label for="direction">Direction:</label>
+            <select id="direction">
+                <option value="left">Left to Right</option>
+                <option value="right">Right to Left</option>
+            </select>
+            <br>
+            <label for="redPercent">Red Cars (%):</label>
+            <input type="number" id="redPercent" value="20" min="0" max="100">
+            <br>
+            <label for="yellowPercent">Yellow Cars (%):</label>
+            <input type="number" id="yellowPercent" value="20" min="0" max="100">
+            <br>
+            <label for="greenPercent">Green Cars (%):</label>
+            <input type="number" id="greenPercent" value="20" min="0" max="100">
+            <br>
+            <label for="blackPercent">Black Cars (%):</label>
+            <input type="number" id="blackPercent" value="20" min="0" max="100">
+            <br>
+            <label for="bluePercent">Blue Cars (%):</label>
+            <input type="number" id="bluePercent" value="20" min="0" max="100">
+            <br>
+            <button id="updateButton">Update</button>
+        </div>
+        <canvas id="carCanvas" style="border:1px solid #000000;"></canvas>
+        <script>
+            // auto resize canvas to fill remaining space
+            const canvas = document.getElementById('carCanvas');
+            const ctx = canvas.getContext('2d');
+
+            const carColors = ['red', 'yellow', 'green', 'black', 'blue'];
+            let cars = [];
+            let direction = 'left';
+            let carPercentages = [20, 20, 20, 20, 20];
+
+            function getRandomCarColor() {
+                const rand = Math.random() * 100;
+                let cumulative = 0;
+                for (let i = 0; i < carPercentages.length; i++) {
+                    cumulative += carPercentages[i];
+                    if (rand < cumulative) {
+                        return carColors[i];
+                    }
+                }
+                return carColors[carColors.length - 1];
+            }
+
+            function createCar() {
+                const color = getRandomCarColor();
+                const yPosition = Math.random() * (canvas.height - 30);
+                const speed = 2 + Math.random() * 3;
+                const xPosition = direction === 'left' ? -50 : canvas.width + 50;
+                cars.push({ x: xPosition, y: yPosition, color: color, speed: speed });
+            }
+
+            function updateCars() {
+                // We'll need to slow down some cars to prevent overlap
+                for (let i = 0; i < cars.length; i++) {
+                    let car = cars[i];
+                    let canMove = true;
+                    for (let j = 0; j < cars.length; j++) {
+                        if (i !== j) {
+                            let otherCar = cars[j];
+                            if (Math.abs(car.y - otherCar.y) < 30) {
+                                if (direction === 'left' && car.x + 50 > otherCar.x && car.x < otherCar.x) {
+                                    canMove = false;
+                                } else if (direction === 'right' && car.x < otherCar.x + 50 && car.x > otherCar.x) {
+                                    canMove = false;
+                                }
+                            }
+                        }
+                    }
+                    if (canMove) {
+                        car.x += direction === 'left' ? car.speed : -car.speed;
+                    }
+                }
+            }
+
+            function drawCars() {
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                for (let car of cars) {
+                    ctx.fillStyle = car.color;
+                    ctx.fillRect(car.x, car.y, 50, 30);
+                }
+            }
+
+            function resizeCanvas() {
+                canvas.width = window.innerWidth;
+                canvas.height = window.innerHeight - document.querySelector('div').offsetHeight;
+            }
+
+            function gameLoop() {
+                if (Math.random() < 0.05) {
+                    createCar();
+                }
+                updateCars();
+                drawCars();
+                requestAnimationFrame(gameLoop);
+            }
+
+            document.getElementById('updateButton').addEventListener('click', () => {
+                direction = document.getElementById('direction').value;
+                carPercentages = [
+                    parseInt(document.getElementById('redPercent').value),
+                    parseInt(document.getElementById('yellowPercent').value),
+                    parseInt(document.getElementById('greenPercent').value),
+                    parseInt(document.getElementById('blackPercent').value),
+                    parseInt(document.getElementById('bluePercent').value)
+                ];
+            });
+            
+            document.addEventListener('DOMContentLoaded', () => {
+                resizeCanvas();
+                window.addEventListener('resize', resizeCanvas);
+            });
+            
+            gameLoop();
+        </script>
+    </body>
+</html>
