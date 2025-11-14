@@ -167,7 +167,6 @@ ${entries}
 }
 const sitemapIndexPath = path.join(pagesDir, 'sitemap.xml'); // root sitemap.xml as index of per-folder sitemaps
 fs.writeFileSync(sitemapIndexPath, renderSitemapIndex(sitemapFiles), 'utf8');
-fs.writeFileSync(path.join(pagesDir, 'sitemap_index.xml'), renderSitemapIndex(sitemapFiles), 'utf8');
 
 // Create index.html inside every folder under targetDir (including targetDir root)
 function renderDirIndex(folderRel, folderNode, dirAbsolutePath) {
