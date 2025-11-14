@@ -71,7 +71,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           # add main generated files plus per-directory index.html under targetDir and sitemaps
-          git add index.html latest_changes.html robots.txt sitemap.xml sitemap_index.xml sitemaps/** || true
+          git add index.html latest_changes.html robots.txt sitemap.xml sitemaps/** || true
           # also add index.html files written inside the targetDir tree
           git add **/index.html || true
           if git diff --staged --quiet; then
