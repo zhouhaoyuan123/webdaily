@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WD20251130</title>
+</head>
+<body>
+    <!-- This Issue is accepts text and detects whether it is english , if it is , the page predicts how much time it will take to read it aloud , if it is not , the page will display a notice-->
+    <h1>Estimated Reading Time</h1> <br/>
+    <form id="readingForm">
+        <label for="textInput">Enter your text here:</label><br/>
+        <textarea id="textInput" rows="10" cols="50"></textarea><br/>
+        <input type="submit" value="Estimate Reading Time">
+    </form>
+    <h2 id="result"></h2>
+    <script>
+        document.getElementById('readingForm').addEventListener('submit', function(event) {
+            event.preventDefault();
+            const text = document.getElementById('textInput').value;
+            const resultElement = document.getElementById('result');
+
+            // Simple English detection (checks for common English words)
+            const englishWords = ['the', 'and', 'is', 'in', 'to', 'of', 'that', 'it', 'you', 'he'];
+            const textLower = text.toLowerCase();
+            const isEnglish = englishWords.some(word => textLower.includes(word));
+
+            if (!isEnglish) {
+                resultElement.textContent = "The text is not detected as English.";
+                return;
+            }
+
+            // Estimate reading time (average reading speed: 200 words per minute)
+            const words = text.trim().split(/\s+/).length;
+            const readingTimeMinutes = Math.ceil(words / 200);
+            resultElement.textContent = `Estimated reading time: ${readingTimeMinutes} minute(s).`;
+        });
+    </script>
+</body>
+</html>
